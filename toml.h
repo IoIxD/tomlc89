@@ -21,6 +21,8 @@ extern "C" {
 #define TOML_THREAD_LOCAL _Thread_local
 #elif defined(_MSC_VER)
 #define TOML_THREAD_LOCAL __declspec(thread)
+#elif defined(__WATCOMC__)
+#define TOML_THREAD_LOCAL
 #else
 #define TOML_THREAD_LOCAL __thread
 #endif
