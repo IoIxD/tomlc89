@@ -96,11 +96,7 @@ struct _TomlValue {
     TomlTable *table;
     TomlArray *array;
     TomlString *string;
-#if defined(_MSC_VER) || defined(__APPLE__)
-    long long integer;
-#else
     long integer;
-#endif
     double float_;
     struct tm datetime;
     int boolean;
@@ -127,7 +123,6 @@ void toml_free(void *p);
 char *toml_strdup(TOML_CONST char *str);
 char *toml_strndup(TOML_CONST char *str, size_t n);
 int toml_vasprintf(char **str, TOML_CONST char *format, va_list args);
-int toml_asprintf(char **str, TOML_CONST char *format, ...);
 
 TOML_CONST TomlErr *toml_err(void);
 void toml_err_clear(void);
@@ -161,13 +156,8 @@ TomlArray *toml_table_get_as_array(TOML_CONST TomlTable *self,
                                    TOML_CONST char *key);
 TomlString *toml_table_get_as_string(TOML_CONST TomlTable *self,
                                      TOML_CONST char *key);
-#if defined(_MSC_VER) || defined(__APPLE__)
-long long toml_table_get_as_integer(TOML_CONST TomlTable *self,
-                                    TOML_CONST char *key);
-#else
 long toml_table_get_as_integer(TOML_CONST TomlTable *self,
                                TOML_CONST char *key);
-#endif
 double toml_table_get_as_float(TOML_CONST TomlTable *self,
                                TOML_CONST char *key);
 const struct tm *toml_table_get_as_datetime(TOML_CONST TomlTable *self,
@@ -189,11 +179,7 @@ TomlValue *toml_value_new(TomlType type);
 TomlValue *toml_value_new_string(TomlType type);
 TomlValue *toml_value_new_table(void);
 TomlValue *toml_value_new_array(void);
-#if defined(_MSC_VER) || defined(__APPLE__)
-TomlValue *toml_value_new_integer(long long integer);
-#else
 TomlValue *toml_value_new_integer(long integer);
-#endif
 TomlValue *toml_value_new_float(double flt);
 TomlValue *toml_value_new_datetime(void);
 TomlValue *toml_value_new_boolean(int boolean);

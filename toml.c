@@ -6,30 +6,26 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <string.h>
 
 static TOML_THREAD_LOCAL TomlErr g_err = {TOML_OK, (char *)"", TOML_TRUE};
 
 static void *toml_default_malloc(void *context, size_t size) {
-  (void)context;
-  void *p = malloc(size);
+  void *p;
+
+  p = malloc(size);
   assert(p != NULL);
   return p;
 }
 
 static void *toml_default_realloc(void *context, void *p, size_t size) {
-  (void)context;
   void *ptr = realloc(p, size);
   assert(ptr != NULL);
   return ptr;
 }
 
-static void toml_default_free(void *context, void *p) {
-  (void)context;
-  free(p);
-}
+static void toml_default_free(void *context, void *p) { free(p); }
 
 static TomlAllocFuncs g_default_alloc_funcs = {
     &toml_default_malloc, &toml_default_realloc, &toml_default_free};
@@ -75,18 +71,11 @@ char *toml_strndup(TOML_CONST char *str, size_t n) {
 }
 
 int toml_vasprintf(char **str, TOML_CONST char *format, va_list args) {
-  int size = 0;
-
-  va_list args_copy;
-  va_copy(args_copy, args);
-  size = vsnprintf(NULL, (size_t)size, format, args_copy);
-  va_end(args_copy);
-
-  if (size < 0) {
-    return size;
-  }
-
-  *str = toml_malloc((size_t)size + 1);
+  /*
+   * we ideally would use vasprintf to find out what the actual size we need to
+   * allocate is. but i'm doing this all on vc++6 which doesn't have that. lol
+   */
+  *str = toml_malloc(512);
   if (*str == NULL)
     return -1;
 
@@ -94,9 +83,11 @@ int toml_vasprintf(char **str, TOML_CONST char *format, va_list args) {
 }
 
 int toml_asprintf(char **str, TOML_CONST char *format, ...) {
+  int size;
   va_list args;
+
   va_start(args, format);
-  int size = toml_vasprintf(str, format, args);
+  size = toml_vasprintf(str, format, args);
   va_end(args);
   return size;
 }
@@ -115,8 +106,9 @@ void toml_err_clear(void) {
 }
 
 TOML_STATIC void toml_err_set(TomlErrCode code, TOML_CONST char *format, ...) {
-  assert(g_err.code == TOML_OK);
   va_list args;
+
+  assert(g_err.code == TOML_OK);
   va_start(args, format);
   g_err.code = code;
   toml_vasprintf(&g_err.message, format, args);
@@ -143,7 +135,7 @@ TOML_STATIC size_t toml_roundup_pow_of_two_size_t(size_t x) {
 #elif SIZE_MAX == 0xffffffff
   v |= v >> 8;
   v |= v >> 16;
-#elif SIZE_MAX == 0xffffffffffffffffll
+#else
   v |= v >> 8;
   v |= v >> 16;
   v |= v >> 32;
@@ -218,6 +210,8 @@ TomlString *toml_string_clone(TOML_CONST TomlString *self) {
 
 int toml_string_equals(TOML_CONST TomlString *self,
                        TOML_CONST TomlString *other) {
+  size_t i;
+
   if (self == other) {
     return TOML_TRUE;
   }
@@ -230,7 +224,6 @@ int toml_string_equals(TOML_CONST TomlString *self,
     return TOML_TRUE;
   }
 
-  size_t i = 0;
   for (i = 0; i < self->len; i++) {
     if (self->str[i] != other->str[i]) {
       return TOML_FALSE;
@@ -335,13 +328,8 @@ TomlString *toml_table_get_as_string(TOML_CONST TomlTable *self,
   return v->value.string;
 }
 
-#if defined(_MSC_VER) || defined(__APPLE__)
-long long toml_table_get_as_integer(TOML_CONST TomlTable *self,
-                                    TOML_CONST char *key)
-#else
-long toml_table_get_as_integer(TOML_CONST TomlTable *self, TOML_CONST char *key)
-#endif
-{
+long toml_table_get_as_integer(TOML_CONST TomlTable *self,
+                               TOML_CONST char *key) {
   TomlValue *v = toml_table_get(self, key);
   assert(v != NULL);
   assert(v->type == TOML_INTEGER);
@@ -493,12 +481,7 @@ TomlValue *toml_value_new_array(void) {
   return self;
 }
 
-#if defined(_MSC_VER) || defined(__APPLE__)
-TomlValue *toml_value_new_integer(long long integer)
-#else
-TomlValue *toml_value_new_integer(long integer)
-#endif
-{
+TomlValue *toml_value_new_integer(long integer) {
   TomlValue *self = toml_malloc(sizeof(TomlValue));
   self->value.integer = integer;
   self->type = TOML_INTEGER;
@@ -622,6 +605,7 @@ char toml_hex_char_to_int(char ch) {
 
 int toml_encode_unicode_scalar(TomlString *result, TomlParser *parser, int n) {
   unsigned int scalar = 0;
+  int i = 0;
 
   if (parser->ptr + n > parser->end) {
     toml_err_set(TOML_ERR_UNICODE, "%s:%d:%d: invalid unicode scalar",
@@ -629,7 +613,6 @@ int toml_encode_unicode_scalar(TomlString *result, TomlParser *parser, int n) {
     return TOML_ERR_UNICODE;
   }
 
-  int i = 0;
   for (i = 0; i < n; i++) {
     char ch = *parser->ptr;
     if (isxdigit(ch)) {
@@ -703,14 +686,16 @@ int toml_encode_unicode_scalar(TomlString *result, TomlParser *parser, int n) {
 TomlString *toml_parse_basic_string(TomlParser *self) {
   TomlString *result = toml_string_new();
 
+  char ch1, ch2;
+
   while (self->ptr < self->end && *self->ptr != '\"' && *self->ptr != '\n') {
-    char ch1 = *self->ptr;
+    ch1 = *self->ptr;
     if (ch1 == '\\') {
       if (self->ptr >= self->end)
         break;
 
       toml_move_next(self);
-      char ch2 = *self->ptr;
+      ch2 = *self->ptr;
 
       if (ch2 == '\"') {
         toml_string_append_char(result, '\"');
@@ -816,8 +801,8 @@ TomlValue *toml_parse_literal_string_value(TomlParser *self) {
 }
 
 TomlValue *toml_parse_multi_line_basic_string(TomlParser *self) {
+  char ch1, ch2;
   TomlValue *value = NULL;
-
   TomlString *result = toml_string_new();
 
   if (*self->ptr == '\n') {
@@ -825,14 +810,14 @@ TomlValue *toml_parse_multi_line_basic_string(TomlParser *self) {
   }
 
   while (self->ptr + 3 <= self->end && strncmp(self->ptr, "\"\"\"", 3) != 0) {
-    char ch1 = *self->ptr;
+    ch1 = *self->ptr;
 
     if (ch1 == '\\') {
       if (self->ptr + 3 > self->end || strncmp(self->ptr, "\"\"\"", 3) == 0)
         break;
 
       toml_move_next(self);
-      char ch2 = *self->ptr;
+      ch2 = *self->ptr;
 
       if (ch2 == '\"') {
         toml_string_append_char(result, '\"');
@@ -941,9 +926,11 @@ TomlValue *toml_parse_datetime(TOML_CONST char *str, size_t len) {
 TomlValue *toml_parse_int_or_float_or_time(TomlParser *self) {
   TomlString *str = NULL;
   TomlValue *result = NULL;
-
+  char last_char;
   char type = 'i';
   int base = 10;
+  int has_exp = TOML_FALSE;
+  long n;
 
   str = toml_string_new();
 
@@ -980,8 +967,7 @@ TomlValue *toml_parse_int_or_float_or_time(TomlParser *self) {
     }
   }
 
-  char last_char = 0;
-  int has_exp = TOML_FALSE;
+  last_char = 0;
   while (self->ptr < self->end) {
     if (*self->ptr == '+' || *self->ptr == '-') {
       if (last_char == 0 ||
@@ -1045,7 +1031,7 @@ TomlValue *toml_parse_int_or_float_or_time(TomlParser *self) {
 
   if (type == 'i') {
     char *end = NULL;
-    long long n = strtoll(str->str, &end, base);
+    n = strtol(str->str, &end, base);
     if (end < str->str + str->len) {
       toml_err_set(TOML_ERR_SYNTAX, "%s:%d:%d: invalid integer", self->filename,
                    self->lineno, self->colno);
@@ -1409,6 +1395,9 @@ TomlTable *toml_walk_table_path(TomlParser *parser, TomlTable *table,
   TomlValue *new_table = NULL;
   TomlValue *array = NULL;
   TomlString *part_copy = NULL;
+  TomlString *part;
+  TomlValue *t;
+  TomlValue *new_table_val;
 
   if (is_array) {
     size_t i = 0;
@@ -1432,8 +1421,8 @@ TomlTable *toml_walk_table_path(TomlParser *parser, TomlTable *table,
       }
     }
 
-    TomlString *part = key_path->elements[i]->value.string;
-    TomlValue *t = toml_table_get_by_string(real_table, part);
+    part = key_path->elements[i]->value.string;
+    t = toml_table_get_by_string(real_table, part);
     if (t == NULL) {
       if (create_if_not_exist) {
         array = toml_value_new_array();
@@ -1455,9 +1444,9 @@ TomlTable *toml_walk_table_path(TomlParser *parser, TomlTable *table,
         goto error;
       }
 
-      TomlValue *new_table = toml_value_new_table();
-      toml_array_append(t->value.array, new_table);
-      real_table = new_table->value.table;
+      new_table_val = toml_value_new_table();
+      toml_array_append(t->value.array, new_table_val);
+      real_table = new_table_val->value.table;
     }
   } else {
     size_t i = 0;
@@ -1660,20 +1649,15 @@ TomlTable *toml_load_str(TOML_CONST char *str) {
   return toml_load_nstr(str, sizeof(str));
 }
 
-#ifdef __WIN32__
-TomlTable *toml_load_file_filename(HANDLE *file, TOML_CONST char *filename) {
-#else
 TomlTable *toml_load_file_filename(FILE *file, TOML_CONST char *filename) {
-#endif
   TomlTable *table = NULL;
   TomlString *str = NULL;
+  size_t count;
+  size_t bytes_to_read;
 
   str = toml_string_new();
 
   toml_string_expand_if_necessary(str, 4095);
-
-  size_t count;
-  size_t bytes_to_read;
   do {
     bytes_to_read = str->_capacity - str->len - 1;
 
